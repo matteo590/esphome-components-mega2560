@@ -42,7 +42,14 @@ void ArduinoPortExpanderComponent::setup() {
   this->write_register(this->analog_reference_, nullptr, 0);
   ESP_LOGCONFIG(TAG, "Successfully configured.");
 }
-void ArduinoPortExpanderComponent::loop() { this->read_valid_ = this->read_gpio_(); }
+void ArduinoPortExpanderComponent::loop() { 
+  uint32_t now = millis();
+  if (now - this->last_read_ < 100)  // max 10 letture/sec
+    return;
+  this->last_read_ = now;
+  this->read_valid_ = this->read_gpio_();
+}
+
 void ArduinoPortExpanderComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "ArduinoPortExpander:");
   LOG_I2C_DEVICE(this)
