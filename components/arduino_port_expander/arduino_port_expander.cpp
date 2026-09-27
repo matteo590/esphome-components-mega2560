@@ -42,14 +42,13 @@ void ArduinoPortExpanderComponent::setup() {
   this->write_register(this->analog_reference_, nullptr, 0);
   ESP_LOGCONFIG(TAG, "Successfully configured.");
 }
-void ArduinoPortExpanderComponent::loop() { 
+void ArduinoPortExpanderComponent::loop() {
   uint32_t now = millis();
-  if (now - this->last_read_ < 100)  // max 10 letture/sec
+  if (now - this->last_read_ < 100)  // max ~10 letture/sec
     return;
   this->last_read_ = now;
   this->read_valid_ = this->read_gpio_();
 }
-
 void ArduinoPortExpanderComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "ArduinoPortExpander:");
   LOG_I2C_DEVICE(this)
@@ -89,14 +88,29 @@ bool ArduinoPortExpanderComponent::read_gpio_() {
   success = (this->read_register(CMD_DIGITAL_READ, this->read_buffer_, DIGITAL_BUFFER_LEN) == i2c::ERROR_OK);
 
   if (!success) {
+    if (!this->status_has_warning())
+      ESP_LOGW(TAG, "Lost communication with ArduinoPortExpander - is the Mega down?");
     this->status_set_warning();
     return false;
+  }
+
+  if (this->status_has_warning()) {
+    // Era offline ed e' appena tornato disponibile: dopo un reset del Mega tutti
+    // i pin ripartono in INPUT, quindi risincronizziamo il pinMode di ogni pin
+    // registrato prima che arrivino nuovi comandi digital_write().
+    ESP_LOGW(TAG, "ArduinoPortExpander reconnected, resyncing %d pin(s)", (int) this->pins_.size());
+    for (auto *p : this->pins_) {
+      this->pin_mode(p->get_pin(), p->get_flags());
+    }
   }
   this->status_clear_warning();
   return true;
 }
 
+void ArduinoPortExpanderComponent::register_pin(ArduinoPortExpanderGPIOPin *pin) { this->pins_.push_back(pin); }
+
 void ArduinoPortExpanderGPIOPin::setup() {
+  this->parent_->register_pin(this);
   pin_mode(flags_);
   this->setup_ = true;
 }

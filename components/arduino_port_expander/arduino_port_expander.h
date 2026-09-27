@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/i2c/i2c.h"
@@ -14,6 +16,8 @@ enum ArduinoPortExpanderAnalogReference : uint8_t {
   ANALOG_REFERENCE_INTERNAL = 0x10,
   ANALOG_REFERENCE_DEFAULT = 0x11,
 };
+
+class ArduinoPortExpanderGPIOPin;  // forward declaration, usata da register_pin()
 
 class ArduinoPortExpanderComponent : public Component, public i2c::I2CDevice {
  public:
@@ -30,6 +34,10 @@ class ArduinoPortExpanderComponent : public Component, public i2c::I2CDevice {
   float analog_read(uint8_t pin);
   /// Helper function to set the pin mode of a pin.
   void pin_mode(uint8_t pin, gpio::Flags flags);
+  /// Registra un pin per il resync automatico dei pinMode dopo una riconnessione.
+  void register_pin(ArduinoPortExpanderGPIOPin *pin);
+  /// True se l'ultima transazione I2C con il Mega e' fallita (Mega irraggiungibile).
+  bool is_offline() { return this->status_has_warning(); }
 
   float get_setup_priority() const override;
   void set_analog_reference(ArduinoPortExpanderAnalogReference analog_reference) {
@@ -54,6 +62,7 @@ class ArduinoPortExpanderComponent : public Component, public i2c::I2CDevice {
   uint32_t last_read_{0};
   ArduinoPortExpanderAnalogReference analog_reference_;
   float reference_voltage_;
+  std::vector<ArduinoPortExpanderGPIOPin *> pins_;
 };
 
 /// Helper class to expose a ArduinoPortExpander pin as an internal input GPIO pin.
@@ -71,6 +80,7 @@ class ArduinoPortExpanderGPIOPin : public GPIOPin {
   void set_inverted(bool inverted) { this->inverted_ = inverted; }
   void set_flags(gpio::Flags flags) { this->flags_ = flags; }
   gpio::Flags get_flags() const override { return this->flags_; }
+  uint8_t get_pin() const { return this->pin_; }
 
  protected:
   ArduinoPortExpanderComponent *parent_;
