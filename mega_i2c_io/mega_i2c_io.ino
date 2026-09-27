@@ -9,15 +9,28 @@ Ports:
   questi due pin vengono quindi esclusi dalla lettura digitale generica.
 */
 
+//CON WATCHDOG
+
 #include <Arduino.h>
 #include <Wire.h>
 
-//#define DEBUG // rimuovere debug per liberare pin 0 e 1 (Serial) come IO
+#define DEBUG // rimuovere debug per liberare pin 0 e 1 (Serial) come IO
 
 #define I2C_ADDRESS 8
 
+// 54 pin digitali (0..53) -> servono ceil(54/8) = 7 byte
+#define DIGITAL_PIN_COUNT 54
+#define DIGITAL_BUFFER_LEN 7
+
+// I2C hardware sul Mega: da escludere dalla lettura digitale generica
+#define I2C_SDA_PIN 20
+#define I2C_SCL_PIN 21
+
 void onRequest();
 void onReceive(int);
+
+volatile unsigned long lastCommMillis = 0;
+
 
 void setup()
 {
@@ -35,22 +48,64 @@ void setup()
 #ifdef DEBUG
   Serial.println(F("Wire ok"));
 #endif
+
+  lastCommMillis = millis();
 }
 
 void loop()
 {
-  // vuoto: tutto e' gestito dalle callback onRequest/onReceive
+  checkCommWatchdog();
+}
+
+// --- Watchdog comunicazione I2C ------------------------------------------
+// Se l'ESP (master) crasha/si riavvia mentre un relè e' attivo, senza questo
+// controllo il Mega continuerebbe a pilotare quel pin per sempre. Il master
+// interroga il Mega di continuo (CMD_DIGITAL_READ ogni ~100ms lato ESP), quindi
+// se non arriva NESSUN comando I2C per COMM_TIMEOUT_MS vuol dire che il master
+// e' sparito: a quel punto rilasciamo tutti i pin configurati come OUTPUT
+// riportandoli a INPUT (stesso stato "neutro" del boot), cosi' il relè si
+// affida al proprio pull-up/pull-down di bordo invece di restare pilotato.
+// Quando l'ESP torna, il suo resync automatico riconfigura i pin da capo.
+#define COMM_TIMEOUT_MS 1000UL
+
+volatile bool failsafeTripped = false;
+volatile byte outputPinsMask[DIGITAL_BUFFER_LEN]; // bit=1 -> pin configurato come OUTPUT
+
+void setOutputPinBit(int pin, bool isOutput)
+{
+  if (isOutput)
+    outputPinsMask[pin / 8] |= (1 << (pin % 8));
+  else
+    outputPinsMask[pin / 8] &= ~(1 << (pin % 8));
+}
+
+void checkCommWatchdog()
+{
+  if (failsafeTripped) return;
+
+  unsigned long lastComm;
+  noInterrupts();
+  lastComm = lastCommMillis;
+  interrupts();
+
+  if (millis() - lastComm < COMM_TIMEOUT_MS) return;
+  failsafeTripped = true;
+  for (int pin = 0; pin < DIGITAL_PIN_COUNT; pin++)
+  {
+    if (pin == I2C_SDA_PIN || pin == I2C_SCL_PIN)
+      continue;
+    if (outputPinsMask[pin / 8] & (1 << (pin % 8)))
+      pinMode(pin, INPUT);
+  }
+  for (byte b = 0; b < DIGITAL_BUFFER_LEN; b++)
+    outputPinsMask[b] = 0;
+
+#ifdef DEBUG
+  Serial.println(F("WATCHDOG: master I2C perso, pin OUTPUT rilasciati a INPUT"));
+#endif
 }
 
 // --- Buffer condiviso con onRequest -----------------------------------
-
-// 54 pin digitali (0..53) -> servono ceil(54/8) = 7 byte
-#define DIGITAL_PIN_COUNT 54
-#define DIGITAL_BUFFER_LEN 7
-
-// I2C hardware sul Mega: da escludere dalla lettura digitale generica
-#define I2C_SDA_PIN 20
-#define I2C_SCL_PIN 21
 
 volatile byte buffer[DIGITAL_BUFFER_LEN]; // riusato anche per readAnalog (2 byte)
 volatile byte len = 1;
@@ -103,6 +158,8 @@ void readAnalog(int pin)
 
 void onRequest()
 {
+  lastCommMillis = millis();
+  failsafeTripped = false;
   Wire.write(const_cast<uint8_t *>(buffer), len);
 }
 
@@ -129,6 +186,9 @@ void onRequest()
 
 void onReceive(int numBytes)
 {
+  lastCommMillis = millis();
+  failsafeTripped = false;
+
 #ifdef DEBUG_READ
   Serial.print("Received bytes: ");
   Serial.println(numBytes);
@@ -179,6 +239,7 @@ void onReceive(int numBytes)
   }
   case CMD_SETUP_PIN_OUTPUT:
     pinMode(pin, OUTPUT);
+    setOutputPinBit(pin, true);
 #ifdef DEBUG
     Serial.print(F("Pin "));
     Serial.print(pin);
@@ -187,6 +248,7 @@ void onReceive(int numBytes)
     break;
   case CMD_SETUP_PIN_INPUT:
     pinMode(pin, INPUT);
+    setOutputPinBit(pin, false);
 #ifdef DEBUG
     Serial.print(F("Pin "));
     Serial.print(pin);
@@ -195,6 +257,7 @@ void onReceive(int numBytes)
     break;
   case CMD_SETUP_PIN_INPUT_PULLUP:
     pinMode(pin, INPUT_PULLUP);
+    setOutputPinBit(pin, false);
 #ifdef DEBUG
     Serial.print(F("Pin "));
     Serial.print(pin);
