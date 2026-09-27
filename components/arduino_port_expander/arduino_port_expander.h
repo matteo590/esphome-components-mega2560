@@ -51,6 +51,7 @@ class ArduinoPortExpanderComponent : public Component, public i2c::I2CDevice {
 
   uint8_t read_buffer_[DIGITAL_BUFFER_LEN]{0};
   bool read_valid_{false};
+  uint32_t last_read_{0};
   ArduinoPortExpanderAnalogReference analog_reference_;
   float reference_voltage_;
 };
