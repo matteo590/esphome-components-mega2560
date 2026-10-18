@@ -16,14 +16,7 @@ from .. import (
     arduino_port_expander_ns,
 )
 
-ANALOG_PIN = {
-    "A0": 0,
-    "A1": 1,
-    "A2": 2,
-    "A3": 3,
-    "A6": 6,
-    "A7": 7,
-}
+ANALOG_PIN = {f"A{i}": i for i in range(16)}
 
 AUTO_LOAD = ["voltage_sampler"]
 

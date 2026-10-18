@@ -99,6 +99,8 @@ bool ArduinoPortExpanderComponent::read_gpio_() {
     // i pin ripartono in INPUT, quindi risincronizziamo il pinMode di ogni pin
     // registrato prima che arrivino nuovi comandi digital_write().
     ESP_LOGW(TAG, "ArduinoPortExpander reconnected, resyncing %d pin(s)", (int) this->pins_.size());
+        ESP_LOGW(TAG, "ArduinoPortExpander reconnected, resyncing %d pin(s)", (int) this->pins_.size());
+    this->write_register(this->analog_reference_, nullptr, 0);
     for (auto *p : this->pins_) {
       this->pin_mode(p->get_pin(), p->get_flags());
     }

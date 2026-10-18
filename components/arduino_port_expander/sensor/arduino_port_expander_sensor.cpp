@@ -13,7 +13,9 @@ float ArduinoPortExpanderSensor::sample() {
   return value;
 }
 
-void ArduinoPortExpanderSensor::update() { this->publish_state(this->sample()); }
-
+void ArduinoPortExpanderSensor::update() {
+  if (this->parent_->is_offline()) return;
+  this->publish_state(this->sample());
+}
 }  // namespace arduino_port_expander
 }  // namespace esphome
