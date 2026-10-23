@@ -14,7 +14,7 @@ Ports:
 #include <Arduino.h>
 #include <Wire.h>
 
-#define DEBUG // rimuovere debug per liberare pin 0 e 1 (Serial) come IO
+//#define DEBUG // rimuovere debug per liberare pin 0 e 1 (Serial) come IO
 
 #define I2C_ADDRESS 8
 
@@ -26,10 +26,50 @@ Ports:
 #define I2C_SDA_PIN 20
 #define I2C_SCL_PIN 21
 
+// Parametri di calibrazione (uguali a quelli usati nelle substitutions)
+const float ADC_ZERO = 501.0;
+//const float DEADBAND = 25.0;
+const float MULTIPLIER = 0.01868;
+
 void onRequest();
 void onReceive(int);
 
 volatile unsigned long lastCommMillis = 0;
+
+
+// Struttura per tracciare lo stato di ogni canale analogico
+struct ACS_Channel {
+  float max_diff;
+  unsigned long window_start;
+  float current_rms;
+};
+ACS_Channel acs_channels[16]; // 16 canali analogici (A0-A15)
+
+void updateACSSensors() {
+  unsigned long now = millis();
+  
+  for (int pin = 0; pin < 16; pin++) {
+    int raw = analogRead(A0 + pin);
+    float diff = abs(raw - ADC_ZERO);
+    
+    // Rileva il picco dell'onda sinusoidale nella finestra corrente
+    if (diff > acs_channels[pin].max_diff) {
+      acs_channels[pin].max_diff = diff;
+    }
+
+    // Ogni 20ms (un periodo completo a 50Hz), calcola e aggiorna il valore RMS
+    if (now - acs_channels[pin].window_start >= 20) {
+      float peak_diff = acs_channels[pin].max_diff;
+      
+      // Calcola Ampere RMS
+      acs_channels[pin].current_rms = peak_diff * MULTIPLIER;
+      
+      // Resetta la finestra per il ciclo successivo
+      acs_channels[pin].max_diff = 0;
+      acs_channels[pin].window_start = now;
+    }
+  }
+}
 
 
 void setup()
@@ -54,6 +94,7 @@ void setup()
 
 void loop()
 {
+  updateACSSensors();
   checkCommWatchdog();
 }
 
@@ -146,14 +187,20 @@ void readDigital()
 // pin: indice logico 0..15 -> A0..A15
 void readAnalog(int pin)
 {
-  int val = analogRead(A0 + pin);
+  // Preleva il valore RMS calcolato in background per quel pin
+  uint16_t val = (acs_channels[pin].current_rms*100.0f);
+  
   len = 2;
-  buffer[0] = val & 0xFF;
-  buffer[1] = (val >> 8) & 0b11;
+  buffer[0] = val & 0xFF;         // Byte meno significativo (LSB)
+  buffer[1] = (val >> 8) & 0xFF;  // Byte più significativo (MSB)
+
 #ifdef DEBUG_READ
   Serial.print(F("Read analog pin A"));
-  Serial.println(pin);
+  Serial.print(pin);
+  Serial.print(F(" -> Current RMS (x100): "));
+  Serial.println(val);
 #endif
+
 }
 
 void onRequest()
